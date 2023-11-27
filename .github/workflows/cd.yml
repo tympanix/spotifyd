@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*.*.*'
+    branches:
+      - feature/aarch64-build-ci
 
 jobs:
   publish:
@@ -11,67 +13,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        build_target: [macos, linux, linux-armhf, linux-armv6]
-        rust: [stable]
-        artifact_type: ['slim', 'default', 'full']  # The build strategy will build all types for each OS specified
+        build_target: ['linux-aarch64']
+        rust: ['1.67.0']
+        artifact_type: ['full']  # The build strategy will build all types for each OS specified
         include:
-          - artifact_type: 'slim'               # Slim version has no features enabled by default.
-            feature: ''
-          - artifact_type: 'default'
-            feature: 'dbus_keyring,dbus_mpris'  # Default version has all extra features enabled
           - artifact_type: 'full'
             feature: 'dbus_keyring,dbus_mpris'  # Full version has all extra features and audio backends enabled
-          - build_target: macos
-            os: macos-latest
-            artifact_prefix: macos
-            target: x86_64-apple-darwin
-          - build_target: linux
+          - build_target: linux-aarch64
             os: ubuntu-latest
-            artifact_prefix: linux
-            target: x86_64-unknown-linux-gnu
-          - build_target: linux-armhf
-            os: ubuntu-18.04
-            artifact_prefix: linux-armhf
-            target: arm-unknown-linux-gnueabihf
-          - build_target: linux-armv6
-            os: ubuntu-18.04
-            artifact_prefix: linux-armv6
-            target: arm-unknown-linux-gnueabihf
-          - build_target: macos
-            artifact_type: slim
-            audio_backend: portaudio_backend
-          - build_target: linux
-            artifact_type: slim
-            audio_backend: pulseaudio_backend
-          - build_target: linux-armhf
-            artifact_type: slim
-            audio_backend: alsa_backend
-          - build_target: linux-armv6
-            artifact_type: slim
-            audio_backend: alsa_backend
-          - build_target: macos
-            artifact_type: default
-            audio_backend: portaudio_backend
-          - build_target: linux
-            artifact_type: default
-            audio_backend: pulseaudio_backend
-          - build_target: linux-armhf
-            artifact_type: default
-            audio_backend: alsa_backend
-          - build_target: linux
+            artifact_prefix: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+          - build_target: linux-aarch64
             artifact_type: full
-            audio_backend: pulseaudio_backend,alsa_backend,rodio_backend
-          - build_target: macos
-            artifact_type: full
-            audio_backend: portaudio_backend,rodio_backend
-          - build_target: linux-armhf
-            artifact_type: full
-            audio_backend: alsa_backend
-        exclude:
-          - build_target: linux-armv6
-            artifact_type: 'default'            # Raspberry Pi toolchain is too old for dbus/systemd
-          - build_target: linux-armv6
-            artifact_type: 'full'               # Raspberry Pi toolchain is too old for dbus/systemd
+            audio_backend: pulseaudio_backend,alsa_backend
 
     steps:
       - name: Installing Rust toolchain
@@ -80,9 +34,6 @@ jobs:
           toolchain: ${{ matrix.rust }}
           target: ${{ matrix.target }}
           override: true
-      - name: Installing needed macOS dependencies
-        if: matrix.os == 'macos-latest'
-        run: brew install awk dbus pkg-config portaudio
       - name: Installing needed Ubuntu dependencies
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'ubuntu-18.04'
         run: |
@@ -147,6 +98,24 @@ jobs:
           sudo ln -rs /build/sysroot/usr/lib/arm-linux-gnueabihf/liblz4.so.1 /build/sysroot/usr/lib/arm-linux-gnueabihf/liblz4.so
           sudo mkdir -p /.cargo
           echo -e '[target.arm-unknown-linux-gnueabihf.dbus]\nrustc-link-lib = ["dbus-1", "gcrypt", "gpg-error", "lz4", "lzma", "systemd"]' | sudo tee -a /.cargo/config
+      - name: Installing needed Ubuntu aarch64 dependencies
+        if: matrix.build_target == 'linux-aarch64'
+        run: |
+          sudo mkdir -p /build/sysroot
+          sudo apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 3B4FE6ACC0B21F32
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ bionic main" | sudo tee -a /etc/apt/sources.list
+          sudo apt-get update
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo apt-get download libasound2:arm64 libasound2-dev:arm64 libssl-dev:arm64 libssl1.1:arm64
+          sudo dpkg -x libasound2_*.deb /build/sysroot/
+          sudo dpkg -x libssl-dev*.deb /build/sysroot/
+          sudo dpkg -x libssl1.1*.deb /build/sysroot/
+          sudo dpkg -x libasound2-dev*.deb /build/sysroot/
+          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+          echo "RUSTFLAGS=-C linker=aarch64-linux-gnu-gcc -L/usr/aarch64-linux-gnu/lib -L/build/sysroot/usr/lib/aarch64-linux-gnu -L/build/sysroot/lib/aarch64-linux-gnu" >> $GITHUB_ENV
+          echo "C_INCLUDE_PATH=/build/sysroot/usr/include" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=/build/sysroot/usr/lib/aarch64-linux-gnu" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=/build/sysroot/usr/include/aarch64-linux-gnu" >> $GITHUB_ENV
       - name: Checking out sources
         uses: actions/checkout@v1
       - name: Running cargo build
